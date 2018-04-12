@@ -4,6 +4,7 @@ import msgpack
 from enum import Enum, auto
 
 import numpy as np
+import re as re
 
 from planning_utils import a_star, heuristic, create_grid
 from udacidrone import Drone
@@ -120,12 +121,31 @@ class MotionPlanning(Drone):
         self.target_position[2] = TARGET_ALTITUDE
 
         # TODO: read lat0, lon0 from colliders into floating point values
+        # read the first line of 'colliders.csv'
+        first_line = ""
+        with open('colliders.csv') as file:
+            first_line = file.readline()
+        # extract lat0 and lon0 with regular expression
+        re_floating = "([+-]?[0-9]*.?[0-9]+)"
+        re_expression = "lat0 {}, lon0 {}".format(re_floating,re_floating)
+        m = re.search(re_expression, first_line)
+
+        lat0 = 0.
+        lon0 = 0.
+        if m is not None:
+            lat0 = float(m.group(1))
+            lon0 = float(m.group(2))
+        else:
+            print("Error: Read lat0 and lon0")
         
         # TODO: set home position to (lon0, lat0, 0)
+        self.set_home_position(lon0,lat0,0.0)
 
         # TODO: retrieve current global position
+        # global_position = self.global_position
  
         # TODO: convert to current local position using global_to_local()
+        # self.local_position  = global_to_local(global_position,self.global_home)
         
         print('global home {0}, position {1}, local position {2}'.format(self.global_home, self.global_position,
                                                                          self.local_position))
