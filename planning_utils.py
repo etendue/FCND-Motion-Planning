@@ -1,6 +1,7 @@
 from enum import Enum
 from queue import PriorityQueue
 import numpy as np
+from math import sqrt
 
 
 def create_grid(data, drone_altitude, safety_distance):
@@ -24,19 +25,20 @@ def create_grid(data, drone_altitude, safety_distance):
     east_size = int(np.ceil(east_max - east_min))
 
     # Initialize an empty grid
-    grid = np.zeros((north_size, east_size))
+    grid = np.zeros((north_size, east_size),dtype=np.float)
 
     # Populate the grid with obstacles
     for i in range(data.shape[0]):
         north, east, alt, d_north, d_east, d_alt = data[i, :]
-        if alt + d_alt + safety_distance > drone_altitude:
+        #alt is equal to d_alt, so remove d_alt here
+        if alt + safety_distance > drone_altitude:
             obstacle = [
                 int(np.clip(north - d_north - safety_distance - north_min, 0, north_size-1)),
                 int(np.clip(north + d_north + safety_distance - north_min, 0, north_size-1)),
                 int(np.clip(east - d_east - safety_distance - east_min, 0, east_size-1)),
                 int(np.clip(east + d_east + safety_distance - east_min, 0, east_size-1)),
             ]
-            grid[obstacle[0]:obstacle[1]+1, obstacle[2]:obstacle[3]+1] = 1
+            grid[obstacle[0]:obstacle[1]+1, obstacle[2]:obstacle[3]+1] = alt + safety_distance - drone_altitude
 
     return grid, int(north_min), int(east_min)
 
@@ -53,8 +55,15 @@ class Action(Enum):
 
     WEST = (0, -1, 1)
     EAST = (0, 1, 1)
-    NORTH = (-1, 0, 1)
-    SOUTH = (1, 0, 1)
+    # here the definition is wrong, in execise, it is up/down,left/right, which is grid coordinate,
+    # here we define the geo coordinate so, it must confirm to geo rule.
+    NORTH = (1, 0, 1)
+    SOUTH = (-1, 0, 1)
+    # add diagonal actions
+    NORTH_EAST = (1, 1, sqrt(2))
+    NORTH_WEST = (1,-1, sqrt(2))
+    SOUTH_EAST = (-1, 1, sqrt(2))
+    SOUTH_WEST = (-1, -1, sqrt(2))
 
     @property
     def cost(self):
@@ -76,14 +85,25 @@ def valid_actions(grid, current_node):
     # check if the node is off the grid or
     # it's an obstacle
 
-    if x - 1 < 0 or grid[x - 1, y] == 1:
-        valid_actions.remove(Action.NORTH)
-    if x + 1 > n or grid[x + 1, y] == 1:
+    # code can be optimized a little bit
+    # check the relative altitude with drone
+    if x - 1 < 0 or grid[x - 1, y] > 0:
         valid_actions.remove(Action.SOUTH)
-    if y - 1 < 0 or grid[x, y - 1] == 1:
+    if x + 1 > n or grid[x + 1, y] > 0:
+        valid_actions.remove(Action.NORTH)
+    if y - 1 < 0 or grid[x, y - 1] > 0:
         valid_actions.remove(Action.WEST)
-    if y + 1 > m or grid[x, y + 1] == 1:
+    if y + 1 > m or grid[x, y + 1] > 0:
         valid_actions.remove(Action.EAST)
+    # extend check for diagonal action
+    if x - 1 < 0 or y - 1 < 0 or grid[x - 1, y - 1] > 0:
+        valid_actions.remove(Action.SOUTH_WEST)
+    if x + 1 > n or y - 1 < 0 or grid[x + 1, y - 1] > 0:
+        valid_actions.remove(Action.NORTH_WEST)
+    if x - 1 < 0 or y + 1 > m or grid[x - 1, y + 1] > 0:
+        valid_actions.remove(Action.SOUTH_EAST)
+    if x + 1 > n or y + 1 > m or grid[x + 1, y + 1] > 0:
+        valid_actions.remove(Action.NORTH_EAST)
 
     return valid_actions
 
@@ -143,4 +163,29 @@ def a_star(grid, h, start, goal):
 
 def heuristic(position, goal_position):
     return np.linalg.norm(np.array(position) - np.array(goal_position))
+
+def point(p):
+    return np.array([p[0], p[1], 1.]).reshape(1, -1)
+
+def collinearity_check(p1, p2, p3, epsilon=1e-6):
+    m = np.concatenate((p1, p2, p3), 0)
+    det = np.linalg.det(m)
+    return abs(det) < epsilon
+
+
+def prune_path(path):
+    # pruned_path = [p for p in path]
+    pruned_path = []
+    pruned_path.append(path[0])
+    # TODO: prune the path!
+    for i in range(1, len(path) - 1):
+        p0 = point(pruned_path[-1])
+        p1 = point(path[i])
+        p2 = point(path[i + 1])
+        if not collinearity_check(p0, p1, p2):
+            pruned_path.append(path[i])
+
+    pruned_path.append(path[-1])
+
+    return pruned_path
 

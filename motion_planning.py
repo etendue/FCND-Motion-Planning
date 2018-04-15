@@ -6,11 +6,11 @@ from enum import Enum, auto
 import numpy as np
 import re as re
 
-from planning_utils import a_star, heuristic, create_grid
+from planning_utils import a_star, heuristic, create_grid, prune_path
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
-from udacidrone.frame_utils import global_to_local
+from udacidrone.frame_utils import global_to_local,local_to_global
 
 
 class States(Enum):
@@ -156,23 +156,37 @@ class MotionPlanning(Drone):
         grid, north_offset, east_offset = create_grid(data, TARGET_ALTITUDE, SAFETY_DISTANCE)
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
         # Define starting point on the grid (this is just grid center)
-        grid_start = (-north_offset, -east_offset)
+        # grid_start = (-north_offset, -east_offset)
         # TODO: convert start position to current position rather than map center
-        
+        (north_size,east_size) = grid.shape
+        grid_start = (int(np.clip(self.local_position[0] - north_offset,0,north_size-1)),
+                      int(np.clip(self.local_position[1] - east_offset, 0, east_size - 1)))
         # Set goal as some arbitrary position on the grid
-        grid_goal = (-north_offset + 10, -east_offset + 10)
-        # TODO: adapt to set goal as latitude / longitude position and convert
+        # random pick some goal
+        #goal_north = np.random.choice(north_size-1,1)[0]
+        #goal_east = np.random.choice(east_size-1,1)[0]
+        #while grid[goal_north][goal_east] > 0:
+        #    goal_north = np.random.choice(north_size - 1, 1)[0]
+        #    goal_east = np.random.choice(east_size - 1, 1)[0]
 
+        #grid_goal = (goal_north,goal_east)
+        grid_goal = (821,251)
+        # TODO: adapt to set goal as latitude / longitude position and convert
+        # Not necessary to do so maybe just for information.
+        goal_global = local_to_global([grid_goal[0]+north_offset,grid_goal[1]+east_offset,0.],self.global_home)
+        print("Goal global position: ",goal_global)
         # Run A* to find a path from start to goal
         # TODO: add diagonal motions with a cost of sqrt(2) to your A* implementation
         # or move to a different search space such as a graph (not done here)
         print('Local Start and Goal: ', grid_start, grid_goal)
         path, _ = a_star(grid, heuristic, grid_start, grid_goal)
         # TODO: prune path to minimize number of waypoints
+        pruned_path = prune_path(path)
+        print("Waypoints before pruning {} and after prunning {}".format(len(path),len(pruned_path)))
         # TODO (if you're feeling ambitious): Try a different approach altogether!
 
         # Convert path to waypoints
-        waypoints = [[p[0] + north_offset, p[1] + east_offset, TARGET_ALTITUDE, 0] for p in path]
+        waypoints = [[p[0] + north_offset, p[1] + east_offset, TARGET_ALTITUDE, 0] for p in pruned_path]
         # Set self.waypoints
         self.waypoints = waypoints
         # TODO: send waypoints to sim (this is just for visualization of waypoints)
