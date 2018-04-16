@@ -6,7 +6,7 @@ from enum import Enum, auto
 import numpy as np
 import re as re
 
-from planning_utils import a_star, heuristic, create_grid, prune_path
+from planning_utils import heuristic, prune_path, create_grid_and_graph,closest_point,a_star_graph
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -46,7 +46,9 @@ class MotionPlanning(Drone):
             if -1.0 * self.local_position[2] > 0.95 * self.target_position[2]:
                 self.waypoint_transition()
         elif self.flight_state == States.WAYPOINT:
-            if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < 1.0:
+            # add deadband control
+            deadband = self.local_velocity/1.0
+            if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < deadband:
                 if len(self.waypoints) > 0:
                     self.waypoint_transition()
                 else:
@@ -153,7 +155,8 @@ class MotionPlanning(Drone):
         data = np.loadtxt('colliders.csv', delimiter=',', dtype='Float64', skiprows=2)
         
         # Define a grid for a particular altitude and safety margin around obstacles
-        grid, north_offset, east_offset = create_grid(data, TARGET_ALTITUDE, SAFETY_DISTANCE)
+        #grid, north_offset, east_offset = create_grid(data, TARGET_ALTITUDE, SAFETY_DISTANCE)
+        grid, graph,north_offset, east_offset = create_grid_and_graph(data, TARGET_ALTITUDE, SAFETY_DISTANCE)
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
         # Define starting point on the grid (this is just grid center)
         # grid_start = (-north_offset, -east_offset)
@@ -163,25 +166,22 @@ class MotionPlanning(Drone):
                       int(np.clip(self.local_position[1] - east_offset, 0, east_size - 1)))
         # Set goal as some arbitrary position on the grid
         # random pick some goal
-        #goal_north = np.random.choice(north_size-1,1)[0]
-        #goal_east = np.random.choice(east_size-1,1)[0]
-        #while grid[goal_north][goal_east] > 0:
-        #    goal_north = np.random.choice(north_size - 1, 1)[0]
-        #    goal_east = np.random.choice(east_size - 1, 1)[0]
-
-        #grid_goal = (goal_north,goal_east)
+        #grid_goal = (np.random.choice(north_size-1,1)[0],np.random.choice(east_size-1,1)[0])
         grid_goal = (821,251)
         # TODO: adapt to set goal as latitude / longitude position and convert
         # Not necessary to do so maybe just for information.
-        goal_global = local_to_global([grid_goal[0]+north_offset,grid_goal[1]+east_offset,0.],self.global_home)
+        goal_global = local_to_global([grid_goal[0]+north_offset,grid_goal[1]+east_offset,0.], self.global_home)
         print("Goal global position: ",goal_global)
         # Run A* to find a path from start to goal
         # TODO: add diagonal motions with a cost of sqrt(2) to your A* implementation
         # or move to a different search space such as a graph (not done here)
         print('Local Start and Goal: ', grid_start, grid_goal)
-        path, _ = a_star(grid, heuristic, grid_start, grid_goal)
+        grid_start_np = closest_point(graph,grid_start)
+        grid_goal_np = closest_point(graph,grid_goal)
+        path, _ = a_star_graph(graph, heuristic, grid_start_np, grid_goal_np)
         # TODO: prune path to minimize number of waypoints
-        pruned_path = prune_path(path)
+        #pruned_path = prune_path(path)
+        pruned_path = path
         print("Waypoints before pruning {} and after prunning {}".format(len(path),len(pruned_path)))
         # TODO (if you're feeling ambitious): Try a different approach altogether!
 

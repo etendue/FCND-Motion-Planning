@@ -2,13 +2,17 @@ from enum import Enum
 from queue import PriorityQueue
 import numpy as np
 from math import sqrt
+from scipy.spatial import Voronoi
+from bresenham import bresenham
+import numpy.linalg as LA
+import networkx as nx
 
 
-def create_grid(data, drone_altitude, safety_distance):
+def create_grid_and_graph(data, drone_altitude, safety_distance):
     """
     Returns a grid representation of a 2D configuration space
-    based on given obstacle data, drone altitude and safety distance
-    arguments.
+    along with a graph  given obstacle data and the
+    drone's altitude.
     """
 
     # minimum and maximum north coordinates
@@ -21,134 +25,103 @@ def create_grid(data, drone_altitude, safety_distance):
 
     # given the minimum and maximum coordinates we can
     # calculate the size of the grid.
-    north_size = int(np.ceil(north_max - north_min))
-    east_size = int(np.ceil(east_max - east_min))
+    north_size = int(np.ceil((north_max - north_min)))
+    east_size = int(np.ceil((east_max - east_min)))
 
     # Initialize an empty grid
-    grid = np.zeros((north_size, east_size),dtype=np.float)
+    grid = np.zeros((north_size, east_size))
+    # Center offset for grid
+    north_min_center = np.min(data[:, 0])
+    east_min_center = np.min(data[:, 1])
 
+    # Define a list to hold Voronoi points
+    points = []
     # Populate the grid with obstacles
     for i in range(data.shape[0]):
         north, east, alt, d_north, d_east, d_alt = data[i, :]
-        #alt is equal to d_alt, so remove d_alt here
-        if alt + safety_distance > drone_altitude:
+
+        if alt + d_alt + safety_distance > drone_altitude:
             obstacle = [
-                int(np.clip(north - d_north - safety_distance - north_min, 0, north_size-1)),
-                int(np.clip(north + d_north + safety_distance - north_min, 0, north_size-1)),
-                int(np.clip(east - d_east - safety_distance - east_min, 0, east_size-1)),
-                int(np.clip(east + d_east + safety_distance - east_min, 0, east_size-1)),
+                int(north - d_north - safety_distance - north_min_center),
+                int(north + d_north + safety_distance - north_min_center),
+                int(east - d_east - safety_distance - east_min_center),
+                int(east + d_east + safety_distance - east_min_center),
             ]
-            grid[obstacle[0]:obstacle[1]+1, obstacle[2]:obstacle[3]+1] = alt + safety_distance - drone_altitude
+            grid[obstacle[0]:obstacle[1], obstacle[2]:obstacle[3]] = alt + safety_distance - drone_altitude
 
-    return grid, int(north_min), int(east_min)
+            # add center of obstacles to points list
+            points.append([north - north_min, east - east_min])
 
+    # create a voronoi graph based on
+    # location of obstacle centres
+    voronoi_graph = Voronoi(points)
+    # check each edge from graph.ridge_vertices for collision
+    edges = []
+    for v in voronoi_graph.ridge_vertices:
+        p1 = voronoi_graph.vertices[v[0]]
+        p2 = voronoi_graph.vertices[v[1]]
 
-# Assume all actions cost the same.
-class Action(Enum):
+        # check collision
+        if not bres_check_collision(p1,p2,grid):
+            edges.append((p1, p2))
+
+    graph = nx.Graph()
+    for edge in edges:
+        dist = LA.norm(np.array(edge[0]) - np.array(edge[1]))
+        graph.add_edge(tuple(edge[0]), tuple(edge[1]), weight=dist)
+
+    return grid, graph, int(north_min), int(east_min)
+
+def closest_point(graph, current_point):
     """
-    An action is represented by a 3 element tuple.
-
-    The first 2 values are the delta of the action relative
-    to the current grid position. The third and final value
-    is the cost of performing the action.
+    Compute the closest point in the `graph`
+    to the `current_point`.
     """
-
-    WEST = (0, -1, 1)
-    EAST = (0, 1, 1)
-    # here the definition is wrong, in execise, it is up/down,left/right, which is grid coordinate,
-    # here we define the geo coordinate so, it must confirm to geo rule.
-    NORTH = (1, 0, 1)
-    SOUTH = (-1, 0, 1)
-    # add diagonal actions
-    NORTH_EAST = (1, 1, sqrt(2))
-    NORTH_WEST = (1,-1, sqrt(2))
-    SOUTH_EAST = (-1, 1, sqrt(2))
-    SOUTH_WEST = (-1, -1, sqrt(2))
-
-    @property
-    def cost(self):
-        return self.value[2]
-
-    @property
-    def delta(self):
-        return (self.value[0], self.value[1])
+    closest_point = None
+    dist = float("inf")
+    for p in graph.nodes:
+        d = LA.norm(np.array(p) - np.array(current_point))
+        if d < dist:
+            closest_point = p
+            dist = d
+    return closest_point
 
 
-def valid_actions(grid, current_node):
-    """
-    Returns a list of valid actions given a grid and current node.
-    """
-    valid_actions = list(Action)
-    n, m = grid.shape[0] - 1, grid.shape[1] - 1
-    x, y = current_node
+def a_star_graph(graph, heuristic, start, goal):
 
-    # check if the node is off the grid or
-    # it's an obstacle
-
-    # code can be optimized a little bit
-    # check the relative altitude with drone
-    if x - 1 < 0 or grid[x - 1, y] > 0:
-        valid_actions.remove(Action.SOUTH)
-    if x + 1 > n or grid[x + 1, y] > 0:
-        valid_actions.remove(Action.NORTH)
-    if y - 1 < 0 or grid[x, y - 1] > 0:
-        valid_actions.remove(Action.WEST)
-    if y + 1 > m or grid[x, y + 1] > 0:
-        valid_actions.remove(Action.EAST)
-    # extend check for diagonal action
-    if x - 1 < 0 or y - 1 < 0 or grid[x - 1, y - 1] > 0:
-        valid_actions.remove(Action.SOUTH_WEST)
-    if x + 1 > n or y - 1 < 0 or grid[x + 1, y - 1] > 0:
-        valid_actions.remove(Action.NORTH_WEST)
-    if x - 1 < 0 or y + 1 > m or grid[x - 1, y + 1] > 0:
-        valid_actions.remove(Action.SOUTH_EAST)
-    if x + 1 > n or y + 1 > m or grid[x + 1, y + 1] > 0:
-        valid_actions.remove(Action.NORTH_EAST)
-
-    return valid_actions
-
-
-def a_star(grid, h, start, goal):
-
-    path = []
-    path_cost = 0
     queue = PriorityQueue()
     queue.put((0, start))
     visited = set(start)
 
     branch = {}
     found = False
-    
+
     while not queue.empty():
         item = queue.get()
+        current_cost = item[0]
         current_node = item[1]
-        if current_node == start:
-            current_cost = 0.0
-        else:              
-            current_cost = branch[current_node][0]
-            
-        if current_node == goal:        
+
+        if current_node == goal:
             print('Found a path.')
             found = True
             break
+
         else:
-            for action in valid_actions(grid, current_node):
-                # get the tuple representation
-                da = action.delta
-                next_node = (current_node[0] + da[0], current_node[1] + da[1])
-                branch_cost = current_cost + action.cost
-                queue_cost = branch_cost + h(next_node, goal)
-                
-                if next_node not in visited:                
-                    visited.add(next_node)               
-                    branch[next_node] = (branch_cost, current_node, action)
-                    queue.put((queue_cost, next_node))
-             
+            for neighbor_node in graph[current_node]:
+                if neighbor_node not in visited:
+                    visited.add(neighbor_node)
+                    cost = graph.edges[current_node, neighbor_node]['weight']
+                    new_cost = current_cost + cost + heuristic(neighbor_node, goal)
+                    queue.put((new_cost, neighbor_node))
+                    branch[neighbor_node] = (new_cost, current_node)
+
+    path = []
+    path_cost = 0
     if found:
         # retrace steps
+        path = []
         n = goal
         path_cost = branch[n][0]
-        path.append(goal)
         while branch[n][1] != start:
             path.append(branch[n][1])
             n = branch[n][1]
@@ -156,13 +129,51 @@ def a_star(grid, h, start, goal):
     else:
         print('**********************')
         print('Failed to find a path!')
-        print('**********************') 
+        print('**********************')
+
     return path[::-1], path_cost
-
-
 
 def heuristic(position, goal_position):
     return np.linalg.norm(np.array(position) - np.array(goal_position))
+
+
+def bres_check_collision(p1, p2, grid):
+    """
+    Note this solution requires `x1` < `x2` and `y1` < `y2`.
+    """
+    x1, y1 = int(np.floor(p1[0])),int(np.floor(p1[1]))
+    x2, y2 = int(np.ceil(p2[0])),int(np.floor(p2[1]))
+    m,n = grid.shape
+
+    if np.min([x1, x2, y1, y2]) < 0 or max(x1, x2) > m - 1 or max(y1, y2) > n - 1:
+        return True
+    # TODO: Determine valid grid cells
+    dy = y2 - y1
+    dx = x2 - x1
+    # m = np.float(y2 -y1)/(x2-x1)
+    x = x1
+    y = y1
+    # fx+ m> y+1  convert to fx*dx +dy > y*dx+dx
+    # fx = y1
+    fx_dx = y1 * dx
+    collision = False
+
+    while x < x2 and y < y2:
+        if grid[x][y] > 0:
+            collision = True
+            break
+
+        if fx_dx + dy > y * dx + dx:
+            y = y + 1
+        elif fx_dx + dy < y * dx + dx:
+            x = x + 1
+            fx_dx += dy
+        else:
+            x = x + 1
+            y = y + 1
+            fx_dx += dy
+
+    return collision
 
 def point(p):
     return np.array([p[0], p[1], 1.]).reshape(1, -1)
