@@ -54,16 +54,9 @@ def create_grid_and_graph(data, drone_altitude, safety_distance):
 
     # create a voronoi graph based on
     # location of obstacle centres
-    voronoi_graph = Voronoi(points)
+    vi = Voronoi(points)
     # check each edge from graph.ridge_vertices for collision
-    edges = []
-    for v in voronoi_graph.ridge_vertices:
-        p1 = voronoi_graph.vertices[v[0]]
-        p2 = voronoi_graph.vertices[v[1]]
-
-        # check collision
-        if not bres_check_collision(p1,p2,grid):
-            edges.append((p1, p2))
+    edges = [(vi.vertices[v[0]],vi.vertices[v[1]]) for v in vi.ridge_vertices if ray_tracing_bresham(vi.vertices[v[0]],vi.vertices[v[1]],grid)]
 
     graph = nx.Graph()
     for edge in edges:
@@ -77,15 +70,15 @@ def closest_point(graph, current_point):
     Compute the closest point in the `graph`
     to the `current_point`.
     """
-    closest_point = None
+    point = None
     dist = float("inf")
     for p in graph.nodes:
         d = LA.norm(np.array(p) - np.array(current_point))
         if d < dist:
-            closest_point = p
-            dist = d
-    return closest_point
+             point = p
+             dist = d
 
+    return point
 
 def a_star_graph(graph, heuristic, start, goal):
 
@@ -137,46 +130,10 @@ def heuristic(position, goal_position):
     return np.linalg.norm(np.array(position) - np.array(goal_position))
 
 
-def bres_check_collision(p1, p2, grid):
-    """
-    Note this solution requires `x1` < `x2` and `y1` < `y2`.
-    """
-    x1, y1 = int(np.floor(p1[0])),int(np.floor(p1[1]))
-    x2, y2 = int(np.ceil(p2[0])),int(np.floor(p2[1]))
-    m,n = grid.shape
-
-    if np.min([x1, x2, y1, y2]) < 0 or max(x1, x2) > m - 1 or max(y1, y2) > n - 1:
-        return True
-    # TODO: Determine valid grid cells
-    dy = y2 - y1
-    dx = x2 - x1
-    # m = np.float(y2 -y1)/(x2-x1)
-    x = x1
-    y = y1
-    # fx+ m> y+1  convert to fx*dx +dy > y*dx+dx
-    # fx = y1
-    fx_dx = y1 * dx
-    collision = False
-
-    while x < x2 and y < y2:
-        if grid[x][y] > 0:
-            collision = True
-            break
-
-        if fx_dx + dy > y * dx + dx:
-            y = y + 1
-        elif fx_dx + dy < y * dx + dx:
-            x = x + 1
-            fx_dx += dy
-        else:
-            x = x + 1
-            y = y + 1
-            fx_dx += dy
-
-    return collision
 
 def point(p):
     return np.array([p[0], p[1], 1.]).reshape(1, -1)
+
 
 def collinearity_check(p1, p2, p3, epsilon=1e-6):
     m = np.concatenate((p1, p2, p3), 0)
@@ -184,7 +141,7 @@ def collinearity_check(p1, p2, p3, epsilon=1e-6):
     return abs(det) < epsilon
 
 
-def prune_path(path):
+def prune_path_collinear(path):
     # pruned_path = [p for p in path]
     pruned_path = []
     pruned_path.append(path[0])
@@ -199,4 +156,193 @@ def prune_path(path):
     pruned_path.append(path[-1])
 
     return pruned_path
+
+
+def prune_path_ray_tracing(path, grid):
+    pruned_path = []
+    pruned_path.append(path[0])
+
+    # remove intermediate points
+    for i in range(1, len(path) - 1):
+        p1 = pruned_path[-1]
+        p2 = path[i]
+        p3 = path[i + 1]
+        if ray_tracing_bresham(p1, p3, grid):
+            pruned_path.append(p2)
+
+    pruned_path.append(path[-1])
+
+    return pruned_path
+
+
+def bresham(p1,p2):
+    """
+    return a list of cells with integer index
+    """
+
+    # make x1 <=x2, switch p1,p2 when necessary
+    x1, y1, x2, y2 = (p1[0], p1[1], p2[0], p2[1]) if p1[0] < p2[0] else (p2[0], p2[1], p1[0], p1[1])
+    min_y, max_y = (y1, y2) if y1 < y2 else (y2, y1)
+
+    if y2 > y1:
+        x1, y1 = int(np.floor(x1)), int(np.floor(y1))
+        x2, y2 = int(np.ceil(x2)), int(np.ceil(y2))
+    else:
+        x1, y1 = int(np.floor(x1)), int(np.ceil(y1))
+        x2, y2 = int(np.ceil(x2)), int(np.floor(y2))
+
+    dy = y2 - y1
+    dx = x2 - x1
+    # m = np.float(y2 -y1)/(x2-x1)
+    # fx+ m> y+1  convert to fx*dx +dy > y*dx+dx
+    # fx = y1
+
+    x, y = (x1, y1)
+    fx_dx = y * dx
+    cells = []
+    if dy > 0:
+        while x <= x2 and y <= y2:
+            cells.append((x, y))
+            if fx_dx + dy > y * dx + dx:
+                y += 1
+            elif fx_dx + dy < y * dx + dx:
+                fx_dx += dy
+                x += 1
+            else:
+                x += 1
+                y += 1
+                fx_dx += dy
+    elif dy < 0:
+        while x <= x2 and y >= y2:
+            cells.append((x, y - 1))
+            if fx_dx + dy > y * dx - dx:
+                fx_dx += dy
+                x += 1
+            elif fx_dx + dy < y * dx - dx:
+                y -= 1
+            else:
+                x += 1
+                y -= 1
+                fx_dx += dy
+    else:
+        while x <= x2:
+            cells.append((x, y))
+            x += 1
+
+    return cells
+
+def ray_tracing_bresham(p1, p2, grid):
+    """
+    check if line between p1 and p2 is blocked
+    return True if line is not blocked
+    """
+
+    m, n = grid.shape
+    # make x1 <=x2, switch p1,p2 when necessary
+    x1, y1, x2, y2 = (p1[0], p1[1], p2[0], p2[1]) if p1[0] < p2[0] else (p2[0], p2[1], p1[0], p1[1])
+    min_y, max_y = (y1, y2) if y1 < y2 else (y2, y1)
+
+    if y2 > y1:
+        x1, y1 = int(np.floor(x1)), int(np.floor(y1))
+        x2, y2 = int(np.ceil(x2)), int(np.ceil(y2))
+    else:
+        x1, y1 = int(np.floor(x1)), int(np.ceil(y1))
+        x2, y2 = int(np.ceil(x2)), int(np.floor(y2))
+
+    if x1 < 0 or x2 > m - 1 or min_y < 0 or max_y > n - 1:
+        return True
+
+    dy = y2 - y1
+    dx = x2 - x1
+    # m = np.float(y2 -y1)/(x2-x1)
+    # fx+ m> y+1  convert to fx*dx +dy > y*dx+dx
+    # fx = y1
+
+    collision = False
+    x, y = (x1, y1)
+    fx_dx = y * dx
+
+    if dy > 0:
+        while x <= x2 and y <= y2:
+            if grid[x][y] > 0:
+                collision = True
+                break
+
+            if fx_dx + dy > y * dx + dx:
+                y += 1
+            elif fx_dx + dy < y * dx + dx:
+                fx_dx += dy
+                x += 1
+            else:
+                x += 1
+                y += 1
+                fx_dx += dy
+    elif dy < 0:
+        while x <= x2 and y >= y2:
+            if grid[x][y - 1] > 0:
+                collision = True
+                break
+
+            if fx_dx + dy > y * dx - dx:
+                fx_dx += dy
+                x += 1
+            elif fx_dx + dy < y * dx - dx:
+                y -= 1
+            else:
+                x += 1
+                y -= 1
+                fx_dx += dy
+    else:
+        while x <= x2:
+            if grid[x][y] > 0:
+                collision = True
+                break
+            x += 1
+
+    return ~collision
+
+def calc_heading(waypoints):
+    '''
+
+    :param waypoints:
+    :return: waypoints with heading adjusted
+    '''
+    waypoints_heading=[]
+    wp1 = waypoints[0]
+    waypoints_heading.append(wp1)
+    for i in range(1,len(waypoints)):
+        wp2 = waypoints[i]
+        heading = np.arctan2((wp2[1]-wp1[1]), (wp2[0]-wp1[0]))
+        waypoints_heading.append([wp2[0],wp2[1],wp2[2],heading])
+        wp1 = wp2
+
+    return waypoints_heading
+
+def connect_to_goal(grid,start,stop):
+    '''
+    add last waypoints to destination, can be on the roof of building
+    :param waypoints:
+    :param grid:
+    :param start:
+    :param stop:
+    :return:
+    '''
+    path = []
+    # no blocking objects
+    if ray_tracing_bresham(start,stop,grid):
+        path.append([stop[0],stop[1],0])
+    else:
+        cells = bresham(start,stop)
+        highest_alt = 0.
+        for c in cells:
+            if grid[c[0]][c[1]] > highest_alt:
+                highest_alt = grid[c[0]][c[1]]
+
+        #lift to the highest_alt
+        path.append([start[0],start[1],highest_alt])
+        path.append([stop[0], stop[1], highest_alt])
+        path.append([stop[0], stop[1], grid[stop[0]][stop[1]]])
+
+    return path
+
 

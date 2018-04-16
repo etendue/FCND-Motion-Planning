@@ -6,7 +6,8 @@ from enum import Enum, auto
 import numpy as np
 import re as re
 
-from planning_utils import heuristic, prune_path, create_grid_and_graph,closest_point,a_star_graph
+from planning_utils import heuristic, create_grid_and_graph,closest_point,a_star_graph, \
+    prune_path_ray_tracing, prune_path_collinear,calc_heading, connect_to_goal
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -35,6 +36,7 @@ class MotionPlanning(Drone):
 
         # initial state
         self.flight_state = States.MANUAL
+        self.landing_height = 0.0
 
         # register all your callbacks here
         self.register_callback(MsgID.LOCAL_POSITION, self.local_position_callback)
@@ -47,7 +49,7 @@ class MotionPlanning(Drone):
                 self.waypoint_transition()
         elif self.flight_state == States.WAYPOINT:
             # add deadband control
-            deadband = self.local_velocity/1.0
+            deadband = np.linalg.norm(self.local_velocity)/1.0
             if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < deadband:
                 if len(self.waypoints) > 0:
                     self.waypoint_transition()
@@ -57,8 +59,8 @@ class MotionPlanning(Drone):
 
     def velocity_callback(self):
         if self.flight_state == States.LANDING:
-            if self.global_position[2] - self.global_home[2] < 0.1:
-                if abs(self.local_position[2]) < 0.01:
+            if self.global_position[2] - self.landing_height< 0.1:
+                if abs(self.local_position[2]-self.landing_height) < 0.01:
                     self.disarming_transition()
 
     def state_callback(self):
@@ -167,7 +169,7 @@ class MotionPlanning(Drone):
         # Set goal as some arbitrary position on the grid
         # random pick some goal
         #grid_goal = (np.random.choice(north_size-1,1)[0],np.random.choice(east_size-1,1)[0])
-        grid_goal = (821,251)
+        grid_goal = (210,100)
         # TODO: adapt to set goal as latitude / longitude position and convert
         # Not necessary to do so maybe just for information.
         goal_global = local_to_global([grid_goal[0]+north_offset,grid_goal[1]+east_offset,0.], self.global_home)
@@ -180,13 +182,25 @@ class MotionPlanning(Drone):
         grid_goal_np = closest_point(graph,grid_goal)
         path, _ = a_star_graph(graph, heuristic, grid_start_np, grid_goal_np)
         # TODO: prune path to minimize number of waypoints
-        #pruned_path = prune_path(path)
-        pruned_path = path
+        pruned_path = prune_path_collinear(path)
+        pruned_path = prune_path_ray_tracing(pruned_path,grid)
         print("Waypoints before pruning {} and after prunning {}".format(len(path),len(pruned_path)))
         # TODO (if you're feeling ambitious): Try a different approach altogether!
 
         # Convert path to waypoints
-        waypoints = [[p[0] + north_offset, p[1] + east_offset, TARGET_ALTITUDE, 0] for p in pruned_path]
+        waypoints = [[ p[0] + north_offset, p[1] + east_offset, TARGET_ALTITUDE, 0] for p in pruned_path]
+
+        # add waypoints from grid_goal_np to grid_goal
+        connect_path = connect_to_goal(grid,grid_goal_np,grid_goal)
+        for p in connect_path:
+            waypoints.append([ p[0] + north_offset, p[1] + east_offset, p[2]+TARGET_ALTITUDE, 0])
+
+        waypoints = calc_heading(waypoints)
+
+        self.landing_height = waypoints[-1][2] - SAFETY_DISTANCE
+        print("Landing height:", self.landing_height)
+
+        waypoints = [ [int(wp[0]),int(wp[1]),int(wp[2]),wp[3]] for wp in waypoints]
         # Set self.waypoints
         self.waypoints = waypoints
         # TODO: send waypoints to sim (this is just for visualization of waypoints)
