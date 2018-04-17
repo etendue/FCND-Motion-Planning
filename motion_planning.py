@@ -13,6 +13,10 @@ from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
 from udacidrone.frame_utils import global_to_local,local_to_global
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 
 class States(Enum):
     MANUAL = auto()
@@ -60,7 +64,7 @@ class MotionPlanning(Drone):
     def velocity_callback(self):
         if self.flight_state == States.LANDING:
             if self.global_position[2] - self.landing_height< 0.1:
-                if abs(self.local_position[2]-self.landing_height) < 0.01:
+                if self.local_position[2]-self.landing_height < 0.01:
                     self.disarming_transition()
 
     def state_callback(self):
@@ -119,8 +123,8 @@ class MotionPlanning(Drone):
     def plan_path(self):
         self.flight_state = States.PLANNING
         print("Searching for a path ...")
-        TARGET_ALTITUDE = 5
-        SAFETY_DISTANCE = 5
+        TARGET_ALTITUDE = 10
+        SAFETY_DISTANCE = 10
 
         self.target_position[2] = TARGET_ALTITUDE
 
@@ -164,15 +168,15 @@ class MotionPlanning(Drone):
         # grid_start = (-north_offset, -east_offset)
         # TODO: convert start position to current position rather than map center
         (north_size,east_size) = grid.shape
-        grid_start = (int(np.clip(self.local_position[0] - north_offset,0,north_size-1)),
+        grid_start = (int(np.clip(self.local_position[0] - north_offset,0, north_size-1)),
                       int(np.clip(self.local_position[1] - east_offset, 0, east_size - 1)))
         # Set goal as some arbitrary position on the grid
         # random pick some goal
-        #grid_goal = (np.random.choice(north_size-1,1)[0],np.random.choice(east_size-1,1)[0])
-        grid_goal = (210,100)
+        grid_goal = (np.random.choice(north_size-1,1)[0],np.random.choice(east_size-1,1)[0])
+        #grid_goal = (210,100)
         # TODO: adapt to set goal as latitude / longitude position and convert
         # Not necessary to do so maybe just for information.
-        goal_global = local_to_global([grid_goal[0]+north_offset,grid_goal[1]+east_offset,0.], self.global_home)
+        goal_global = local_to_global([grid_goal[0]+north_offset,grid_goal[1]+east_offset,grid[grid_goal]+TARGET_ALTITUDE-SAFETY_DISTANCE], self.global_home)
         print("Goal global position: ",goal_global)
         # Run A* to find a path from start to goal
         # TODO: add diagonal motions with a cost of sqrt(2) to your A* implementation
@@ -180,7 +184,12 @@ class MotionPlanning(Drone):
         print('Local Start and Goal: ', grid_start, grid_goal)
         grid_start_np = closest_point(graph,grid_start)
         grid_goal_np = closest_point(graph,grid_goal)
+        print('Nearest Local Start and Goal: ', grid_start_np, grid_goal_np)
         path, _ = a_star_graph(graph, heuristic, grid_start_np, grid_goal_np)
+        if len(path) == 0:
+            return
+
+
         # TODO: prune path to minimize number of waypoints
         pruned_path = prune_path_collinear(path)
         pruned_path = prune_path_ray_tracing(pruned_path,grid)
@@ -191,13 +200,13 @@ class MotionPlanning(Drone):
         waypoints = [[ p[0] + north_offset, p[1] + east_offset, TARGET_ALTITUDE, 0] for p in pruned_path]
 
         # add waypoints from grid_goal_np to grid_goal
-        connect_path = connect_to_goal(grid,grid_goal_np,grid_goal)
-        for p in connect_path:
-            waypoints.append([ p[0] + north_offset, p[1] + east_offset, p[2]+TARGET_ALTITUDE, 0])
+        #connect_path = connect_to_goal(grid,grid_goal_np,grid_goal)
+        #for p in connect_path:
+        #    waypoints.append([ p[0] + north_offset, p[1] + east_offset, p[2]+TARGET_ALTITUDE, 0])
 
         waypoints = calc_heading(waypoints)
 
-        self.landing_height = waypoints[-1][2] - SAFETY_DISTANCE
+        self.landing_height = waypoints[-1][2] - TARGET_ALTITUDE
         print("Landing height:", self.landing_height)
 
         waypoints = [ [int(wp[0]),int(wp[1]),int(wp[2]),wp[3]] for wp in waypoints]
@@ -205,6 +214,19 @@ class MotionPlanning(Drone):
         self.waypoints = waypoints
         # TODO: send waypoints to sim (this is just for visualization of waypoints)
         self.send_waypoints()
+
+        plt.figure(figsize=(12, 12))
+        plt.imshow(grid > 0, origin='lower')
+        plt.xlabel('EAST')
+        plt.ylabel('NORTH')
+        # for e in edges:
+        pp = np.transpose(np.array(pruned_path))
+
+        plt.plot(pp[1], pp[0], c='g')
+
+        plt.plot(int(grid_start_np[1]), int(grid_start_np[0]), marker='o', c='b')
+        plt.plot(int(grid_goal_np[1]), int(grid_goal_np[0]), '*')
+        plt.savefig("plot.png")
 
     def start(self):
         self.start_log("Logs", "NavLog.txt")

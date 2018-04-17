@@ -47,7 +47,7 @@ def create_grid_and_graph(data, drone_altitude, safety_distance):
                 int(east - d_east - safety_distance - east_min_center),
                 int(east + d_east + safety_distance - east_min_center),
             ]
-            grid[obstacle[0]:obstacle[1], obstacle[2]:obstacle[3]] = alt + safety_distance - drone_altitude
+            grid[obstacle[0]:obstacle[1], obstacle[2]:obstacle[3]] = alt + d_alt
 
             # add center of obstacles to points list
             points.append([north - north_min, east - east_min])
@@ -80,13 +80,15 @@ def closest_point(graph, current_point):
 
     return point
 
-def a_star_graph(graph, heuristic, start, goal):
 
+def a_star_graph(graph, heuristic, start, goal):
     queue = PriorityQueue()
     queue.put((0, start))
-    visited = set(start)
-
+    visited = set()
+    visited.add(start)
     branch = {}
+
+    branch[start] = (0 + heuristic(start, goal), None)
     found = False
 
     while not queue.empty():
@@ -110,19 +112,19 @@ def a_star_graph(graph, heuristic, start, goal):
 
     path = []
     path_cost = 0
-    if found:
+    n = goal
+    if not found:
+        print('**********************')
+        print('Failed to find a path!')
+        print('**********************')
+    else:
         # retrace steps
-        path = []
-        n = goal
         path_cost = branch[n][0]
         while branch[n][1] != start:
             path.append(branch[n][1])
             n = branch[n][1]
+        # add 2nd node
         path.append(branch[n][1])
-    else:
-        print('**********************')
-        print('Failed to find a path!')
-        print('**********************')
 
     return path[::-1], path_cost
 
@@ -167,7 +169,7 @@ def prune_path_ray_tracing(path, grid):
         p1 = pruned_path[-1]
         p2 = path[i]
         p3 = path[i + 1]
-        if ray_tracing_bresham(p1, p3, grid):
+        if not ray_tracing_bresham(p1, p3, grid):
             pruned_path.append(p2)
 
     pruned_path.append(path[-1])
@@ -250,7 +252,7 @@ def ray_tracing_bresham(p1, p2, grid):
         x2, y2 = int(np.ceil(x2)), int(np.floor(y2))
 
     if x1 < 0 or x2 > m - 1 or min_y < 0 or max_y > n - 1:
-        return True
+        return False
 
     dy = y2 - y1
     dx = x2 - x1
@@ -299,7 +301,7 @@ def ray_tracing_bresham(p1, p2, grid):
                 break
             x += 1
 
-    return ~collision
+    return not collision
 
 def calc_heading(waypoints):
     '''
