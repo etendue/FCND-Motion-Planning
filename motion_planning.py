@@ -5,9 +5,9 @@ from enum import Enum, auto
 
 import numpy as np
 import re as re
+from time import gmtime, strftime
 
-from planning_utils import heuristic, create_grid_and_graph,closest_point,a_star_graph, \
-    prune_path_ray_tracing, prune_path_collinear,calc_heading, connect_to_goal
+from planning_utils import create_grid, plan_path, calc_heading
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -50,11 +50,14 @@ class MotionPlanning(Drone):
     def local_position_callback(self):
         if self.flight_state == States.TAKEOFF:
             if -1.0 * self.local_position[2] > 0.95 * self.target_position[2]:
+                print("Local_position, target_position", self.local_position * -1, self.target_position)
                 self.waypoint_transition()
         elif self.flight_state == States.WAYPOINT:
             # add deadband control
-            deadband = np.linalg.norm(self.local_velocity)/1.0
-            if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < deadband:
+            deadband = np.clip(np.linalg.norm(self.local_velocity)/1.0,0.1,5)
+            #print(deadband,abs(np.linalg.norm(self.target_position[0:2] - self.local_position[0:2])),abs(self.target_position[2] - self.local_position[2]))
+            if abs(np.linalg.norm(self.target_position[0:2] - self.local_position[0:2])) < deadband and \
+                abs(self.target_position[2] + self.local_position[2]) < 0.5:
                 if len(self.waypoints) > 0:
                     self.waypoint_transition()
                 else:
@@ -161,17 +164,17 @@ class MotionPlanning(Drone):
         data = np.loadtxt('colliders.csv', delimiter=',', dtype='Float64', skiprows=2)
         
         # Define a grid for a particular altitude and safety margin around obstacles
-        #grid, north_offset, east_offset = create_grid(data, TARGET_ALTITUDE, SAFETY_DISTANCE)
-        grid, graph,north_offset, east_offset = create_grid_and_graph(data, TARGET_ALTITUDE, SAFETY_DISTANCE)
+        grid, north_offset, east_offset = create_grid(data, TARGET_ALTITUDE)
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
         # Define starting point on the grid (this is just grid center)
         # grid_start = (-north_offset, -east_offset)
         # TODO: convert start position to current position rather than map center
-        (north_size,east_size) = grid.shape
-        grid_start = (int(np.clip(self.local_position[0] - north_offset,0, north_size-1)),
-                      int(np.clip(self.local_position[1] - east_offset, 0, east_size - 1)))
+
+        (north_size, east_size) = grid.shape
+        grid_start = (int(self.local_position[0]) - north_offset,int(self.local_position[1]) - east_offset)
         # Set goal as some arbitrary position on the grid
         # random pick some goal
+        (north_size, east_size) = grid.shape
         grid_goal = (np.random.choice(north_size-1,1)[0],np.random.choice(east_size-1,1)[0])
         #grid_goal = (210,100)
         # TODO: adapt to set goal as latitude / longitude position and convert
@@ -181,52 +184,44 @@ class MotionPlanning(Drone):
         # Run A* to find a path from start to goal
         # TODO: add diagonal motions with a cost of sqrt(2) to your A* implementation
         # or move to a different search space such as a graph (not done here)
-        print('Local Start and Goal: ', grid_start, grid_goal)
-        grid_start_np = closest_point(graph,grid_start)
-        grid_goal_np = closest_point(graph,grid_goal)
-        print('Nearest Local Start and Goal: ', grid_start_np, grid_goal_np)
-        path, _ = a_star_graph(graph, heuristic, grid_start_np, grid_goal_np)
-        if len(path) == 0:
-            return
+        print('Start and Goal position on grid: ', grid_start, grid_goal)
+
+        # block center at flying altitude
+        grid_block_centers = data[np.where(data[:, 2] * 2 + SAFETY_DISTANCE > TARGET_ALTITUDE)][:, :2]  - [north_offset,east_offset]
+
+        grid_waypoints = plan_path(grid_start, grid_goal, grid, grid_block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE)
 
 
         # TODO: prune path to minimize number of waypoints
-        pruned_path = prune_path_collinear(path)
-        pruned_path = prune_path_ray_tracing(pruned_path,grid)
-        print("Waypoints before pruning {} and after prunning {}".format(len(path),len(pruned_path)))
         # TODO (if you're feeling ambitious): Try a different approach altogether!
 
-        # Convert path to waypoints
-        waypoints = [[ p[0] + north_offset, p[1] + east_offset, TARGET_ALTITUDE, 0] for p in pruned_path]
-
-        # add waypoints from grid_goal_np to grid_goal
-        #connect_path = connect_to_goal(grid,grid_goal_np,grid_goal)
-        #for p in connect_path:
-        #    waypoints.append([ p[0] + north_offset, p[1] + east_offset, p[2]+TARGET_ALTITUDE, 0])
-
+        # Convert grid_waypoints to NED local coordination
+        waypoints = np.array(grid_waypoints) + np.array([north_offset,east_offset,0])
+        # Add heading in waypoint
         waypoints = calc_heading(waypoints)
 
-        self.landing_height = waypoints[-1][2] - TARGET_ALTITUDE
+        self.landing_height = waypoints[-1][2]
         print("Landing height:", self.landing_height)
-
-        waypoints = [ [int(wp[0]),int(wp[1]),int(wp[2]),wp[3]] for wp in waypoints]
         # Set self.waypoints
-        self.waypoints = waypoints
+        self.waypoints = [ [int(wp[0]),int(wp[1]),int(wp[2]),wp[3]] for wp in waypoints]
+        #[ [wp[0],wp[1],wp[2],0] for wp in waypoints]
         # TODO: send waypoints to sim (this is just for visualization of waypoints)
         self.send_waypoints()
+        self.waypoints = waypoints
 
         plt.figure(figsize=(12, 12))
-        plt.imshow(grid > 0, origin='lower')
+        plt.imshow(grid > TARGET_ALTITUDE - SAFETY_DISTANCE, origin='lower')
         plt.xlabel('EAST')
         plt.ylabel('NORTH')
-        # for e in edges:
-        pp = np.transpose(np.array(pruned_path))
+        pp = np.transpose(np.array(grid_waypoints))
 
         plt.plot(pp[1], pp[0], c='g')
 
-        plt.plot(int(grid_start_np[1]), int(grid_start_np[0]), marker='o', c='b')
-        plt.plot(int(grid_goal_np[1]), int(grid_goal_np[0]), '*')
-        plt.savefig("plot.png")
+        plt.plot(grid_start[1], grid_start[0], marker='o', c='b')
+        plt.plot(grid_goal[1],  grid_goal[0], '*')
+        plt.savefig("plot_{}.png".format(strftime("%Y_%m_%d_%H_%M_%S", gmtime())))
+
+
 
     def start(self):
         self.start_log("Logs", "NavLog.txt")
