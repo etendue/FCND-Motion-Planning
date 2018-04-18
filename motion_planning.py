@@ -55,9 +55,8 @@ class MotionPlanning(Drone):
         elif self.flight_state == States.WAYPOINT:
             # add deadband control
             deadband = np.clip(np.linalg.norm(self.local_velocity)/1.0,0.1,5)
-            #print(deadband,abs(np.linalg.norm(self.target_position[0:2] - self.local_position[0:2])),abs(self.target_position[2] - self.local_position[2]))
             if abs(np.linalg.norm(self.target_position[0:2] - self.local_position[0:2])) < deadband and \
-                abs(self.target_position[2] + self.local_position[2]) < 0.5:
+                abs(self.target_position[2] + self.local_position[2]) < 0.2:
                 if len(self.waypoints) > 0:
                     self.waypoint_transition()
                 else:
@@ -164,32 +163,34 @@ class MotionPlanning(Drone):
         data = np.loadtxt('colliders.csv', delimiter=',', dtype='Float64', skiprows=2)
         
         # Define a grid for a particular altitude and safety margin around obstacles
-        grid, north_offset, east_offset = create_grid(data, TARGET_ALTITUDE)
+        grid_w_safty, grid, north_offset, east_offset = create_grid(data, SAFETY_DISTANCE)
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
         # Define starting point on the grid (this is just grid center)
         # grid_start = (-north_offset, -east_offset)
         # TODO: convert start position to current position rather than map center
 
-        (north_size, east_size) = grid.shape
+        (north_size, east_size) = grid_w_safty.shape
         grid_start = (int(self.local_position[0]) - north_offset,int(self.local_position[1]) - east_offset)
         # Set goal as some arbitrary position on the grid
         # random pick some goal
-        (north_size, east_size) = grid.shape
+        (north_size, east_size) = grid_w_safty.shape
         grid_goal = (np.random.choice(north_size-1,1)[0],np.random.choice(east_size-1,1)[0])
         #grid_goal = (210,100)
         # TODO: adapt to set goal as latitude / longitude position and convert
         # Not necessary to do so maybe just for information.
-        goal_global = local_to_global([grid_goal[0]+north_offset,grid_goal[1]+east_offset,grid[grid_goal]+TARGET_ALTITUDE-SAFETY_DISTANCE], self.global_home)
+        goal_global = local_to_global([grid_goal[0]+north_offset,grid_goal[1]+east_offset,grid_w_safty[grid_goal]+TARGET_ALTITUDE-SAFETY_DISTANCE], self.global_home)
         print("Goal global position: ",goal_global)
         # Run A* to find a path from start to goal
         # TODO: add diagonal motions with a cost of sqrt(2) to your A* implementation
         # or move to a different search space such as a graph (not done here)
+        start_3d = (grid_start[0],grid_start[1],-self.local_position[2])
+        goal_3d = (grid_goal[0],grid_goal[1],grid[grid_goal])
         print('Start and Goal position on grid: ', grid_start, grid_goal)
 
         # block center at flying altitude
         grid_block_centers = data[np.where(data[:, 2] * 2 + SAFETY_DISTANCE > TARGET_ALTITUDE)][:, :2]  - [north_offset,east_offset]
 
-        grid_waypoints = plan_path(grid_start, grid_goal, grid, grid_block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE)
+        grid_waypoints = plan_path(start_3d, goal_3d, grid_w_safty, grid_block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE)
 
 
         # TODO: prune path to minimize number of waypoints

@@ -254,7 +254,6 @@ def bresham(p1, p2):
     # make x1 <=x2, switch p1,p2 when necessary
     reverse = p1[0] > p2[0]
     x1, y1, x2, y2 = (p1[0], p1[1], p2[0], p2[1]) if not reverse else (p2[0], p2[1], p1[0], p1[1])
-    min_y, max_y = (y1, y2) if y1 < y2 else (y2, y1)
 
     if y2 > y1:
         x1, y1 = int(np.floor(x1)), int(np.floor(y1))
@@ -334,7 +333,7 @@ def prune_path_ray_tracing(path, grid):
         p1 = pruned_path[-1]
         p2 = path[i]
         p3 = path[i + 1]
-        if not ray_tracing_bresham(p1, p3, grid) or p2[2] != p1[2]:
+        if not ray_tracing_bresham(p1, p3, grid):
             pruned_path.append(p2)
 
     pruned_path.append(path[-1])
@@ -362,6 +361,7 @@ def create_grid(data, safety_distance):
     east_size = int(np.ceil(east_max - east_min))
 
     # Initialize an empty grid
+    grid_w_safty = np.zeros((north_size, east_size), dtype=np.float)
     grid = np.zeros((north_size, east_size), dtype=np.float)
 
     # Populate the grid with obstacles
@@ -373,9 +373,16 @@ def create_grid(data, safety_distance):
             int(np.clip(east - d_east - safety_distance - east_min, 0, east_size - 1)),
             int(np.clip(east + d_east + safety_distance - east_min, 0, east_size - 1)),
         ]
-        grid[obstacle[0]:obstacle[1] + 1, obstacle[2]:obstacle[3] + 1] = alt + d_alt
+        obstacle_raw = [
+            int(np.clip(north - d_north - north_min, 0, north_size - 1)),
+            int(np.clip(north + d_north - north_min, 0, north_size - 1)),
+            int(np.clip(east - d_east  - east_min, 0, east_size - 1)),
+            int(np.clip(east + d_east  - east_min, 0, east_size - 1)),
+        ]
+        grid_w_safty[obstacle[0]:obstacle[1] + 1, obstacle[2]:obstacle[3] + 1] = alt + d_alt
+        grid[obstacle_raw[0]:obstacle_raw[1] + 1, obstacle_raw[2]:obstacle_raw[3] + 1] = alt + d_alt
 
-    return grid, int(north_min), int(east_min)
+    return grid_w_safty, grid, int(north_min), int(east_min)
 
 
 def create_graph(block_centers, grid):
@@ -414,7 +421,7 @@ def closest_point(graph, current_point):
     return (all_nodes[min_ind][0],all_nodes[min_ind][1])
 
 
-def plan_path(start, goal, grid, block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE):
+def plan_path(start_3d, goal_3d, grid, block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE):
     '''
     the function does the waypoint/path planning
     :param data:
@@ -429,6 +436,8 @@ def plan_path(start, goal, grid, block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE
     grid_at_alt = np.array(grid > TARGET_ALTITUDE - SAFETY_DISTANCE, dtype=np.int)
 
     waypoints = []
+    start = (start_3d[0],start_3d[1])
+    goal = (goal_3d[0],goal_3d[1])
 
     # case 1, check if there is a straight line between  start and goal:
     if ray_tracing_bresham(start, goal, grid_at_alt):
@@ -453,6 +462,8 @@ def plan_path(start, goal, grid, block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE
     waypoints.append([start_np[0], start_np[1], TARGET_ALTITUDE])
 
     path2, _ = a_star_graph(graph, heuristic, start_np, goal_np)
+    #do ray_tracing prunch
+    path2 = prune_path_ray_tracing(path2,grid_at_alt)
     waypoints = waypoints + [[p[0], p[1], TARGET_ALTITUDE] for p in path2]
 
     # get straight line and fly by elevate the vehicle to height which no thing will block
@@ -464,7 +475,7 @@ def plan_path(start, goal, grid, block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE
 
     waypoints.append([goal_np[0], goal_np[1], max_altitude])
     waypoints.append([goal[0], goal[1], max_altitude])
-    waypoints.append([goal[0],goal[1],int(grid[goal])])
+    waypoints.append([goal[0],goal[1],goal_3d[2]])
 
     pruned_waypoints = prune_path_collinear(waypoints)
     print("Waypoints number before and after Colinear check:", len(waypoints), len(pruned_waypoints))
