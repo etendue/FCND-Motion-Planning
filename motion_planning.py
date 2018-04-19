@@ -130,7 +130,7 @@ class MotionPlanning(Drone):
 
         self.target_position[2] = TARGET_ALTITUDE
 
-        # TODO: read lat0, lon0 from colliders into floating point values
+        # read lat0, lon0 from colliders into floating point values
         # read the first line of 'colliders.csv'
         first_line = ""
         with open('colliders.csv') as file:
@@ -148,13 +148,13 @@ class MotionPlanning(Drone):
         else:
             print("Error: Read lat0 and lon0")
         
-        # TODO: set home position to (lon0, lat0, 0)
+        # set home position to (lon0, lat0, 0)
         self.set_home_position(lon0,lat0,0.0)
 
-        # TODO: retrieve current global position
+        # retrieve current global position
         # global_position = self.global_position
  
-        # TODO: convert to current local position using global_to_local()
+        # convert to current local position using global_to_local()
         # self.local_position  = global_to_local(global_position,self.global_home)
         
         print('global home {0}, position {1}, local position {2}'.format(self.global_home, self.global_position,
@@ -165,23 +165,27 @@ class MotionPlanning(Drone):
         # Define a grid for a particular altitude and safety margin around obstacles
         grid_w_safty, grid, north_offset, east_offset = create_grid(data, SAFETY_DISTANCE)
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
-        # Define starting point on the grid (this is just grid center)
-        # grid_start = (-north_offset, -east_offset)
-        # TODO: convert start position to current position rather than map center
+
+        # convert start position to current position rather than map center
 
         (north_size, east_size) = grid_w_safty.shape
         grid_start = (int(self.local_position[0]) - north_offset,int(self.local_position[1]) - east_offset)
         # Set goal as some arbitrary position on the grid
         # random pick some goal
         (north_size, east_size) = grid_w_safty.shape
+
+        # comment this line to choose a goal manually
+        # the drone is supposed to fly to anywhere on the map, as it can fly.
         grid_goal = (np.random.choice(north_size-1,1)[0],np.random.choice(east_size-1,1)[0])
+        # manual goal
         #grid_goal = (210,100)
+
         # TODO: adapt to set goal as latitude / longitude position and convert
         # Not necessary to do so maybe just for information.
         goal_global = local_to_global([grid_goal[0]+north_offset,grid_goal[1]+east_offset,grid_w_safty[grid_goal]+TARGET_ALTITUDE-SAFETY_DISTANCE], self.global_home)
         print("Goal global position: ",goal_global)
-        # Run A* to find a path from start to goal
-        # TODO: add diagonal motions with a cost of sqrt(2) to your A* implementation
+
+
         # or move to a different search space such as a graph (not done here)
         start_3d = (grid_start[0],grid_start[1],-self.local_position[2])
         goal_3d = (grid_goal[0],grid_goal[1],grid[grid_goal])
@@ -190,34 +194,34 @@ class MotionPlanning(Drone):
         # block center at flying altitude
         grid_block_centers = data[np.where(data[:, 2] * 2 + SAFETY_DISTANCE > TARGET_ALTITUDE)][:, :2]  - [north_offset,east_offset]
 
+        # waypoint in grid coordinate
         grid_waypoints = plan_path(start_3d, goal_3d, grid_w_safty, grid_block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE)
-
-
-        # TODO: prune path to minimize number of waypoints
-        # TODO (if you're feeling ambitious): Try a different approach altogether!
 
         # Convert grid_waypoints to NED local coordination
         waypoints = np.array(grid_waypoints) + np.array([north_offset,east_offset,0])
         # Add heading in waypoint
         waypoints = calc_heading(waypoints)
 
+        # set the landing height, can be on building
         self.landing_height = waypoints[-1][2]
         print("Landing height:", self.landing_height)
         # Set self.waypoints
+        # don't know why send_waypoints will fail if send waypoints directly
+        # through this convert it works.
         self.waypoints = [ [int(wp[0]),int(wp[1]),int(wp[2]),wp[3]] for wp in waypoints]
-        #[ [wp[0],wp[1],wp[2],0] for wp in waypoints]
         # TODO: send waypoints to sim (this is just for visualization of waypoints)
         self.send_waypoints()
+
+        # just re assign the original waypoints
         self.waypoints = waypoints
 
+        # to output a picture for navigation
         plt.figure(figsize=(12, 12))
         plt.imshow(grid > TARGET_ALTITUDE - SAFETY_DISTANCE, origin='lower')
         plt.xlabel('EAST')
         plt.ylabel('NORTH')
         pp = np.transpose(np.array(grid_waypoints))
-
         plt.plot(pp[1], pp[0], c='g')
-
         plt.plot(grid_start[1], grid_start[0], marker='o', c='b')
         plt.plot(grid_goal[1],  grid_goal[0], '*')
         plt.savefig("plot_{}.png".format(strftime("%Y_%m_%d_%H_%M_%S", gmtime())))

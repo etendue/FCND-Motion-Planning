@@ -72,8 +72,15 @@ def valid_actions(grid, current_node):
 
 
 def a_star_grid(grid, h, start, goal):
-    path = []
-    path_cost = 0
+    '''
+    an a star path search implementation with grid
+    :param grid: grid with obstacle marked as value > 0, typically 1
+    :param h: heuristic funtion
+    :param start:  2-d integer start point
+    :param goal:  2-d integer goal point
+    :return: (path, cost)  with list of 2-d integer waypoints, and cost of path; (None,None) if no path found
+    '''
+
     queue = PriorityQueue()
     queue.put((0, start))
     visited = set()
@@ -109,6 +116,7 @@ def a_star_grid(grid, h, start, goal):
 
     if found:
         # retrace steps
+        path = []
         n = goal
         path_cost = branch[n][0]
         path.append(goal)
@@ -125,8 +133,15 @@ def a_star_grid(grid, h, start, goal):
 
 
 def a_star_graph(graph, heuristic, start, goal):
-    path = []
-    path_cost = 0
+    '''
+    an a star path search implementation with graph
+    :param graph: a graph with connected nodes and edges
+    :param h: heuristic function
+    :param start:  #start point
+    :param goal:  goal point
+    :return: (path, cost)  with list of waypoints containing node of graph, and cost of path; (None,None) if no path found
+    '''
+
     queue = PriorityQueue()
     queue.put((0, start))
     visited = set()
@@ -157,6 +172,7 @@ def a_star_graph(graph, heuristic, start, goal):
     if found:
         # retrace steps
         n = goal
+        path = []
         path_cost = branch[n][0]
         path.append(goal)
         while branch[n][1] != start:
@@ -176,16 +192,20 @@ def heuristic(position, goal_position):
 
 
 def ray_tracing_bresham(p1, p2, grid):
-    """
-    check if line between p1 and p2 is blocked
-    return True if line is not blocked
-    """
+    '''
+    check if line between p1 and p2 is blocked by ray tracing method using bresenham algorithm
+    :param p1: start point
+    :param p2: stop point
+    :param grid: grid with obstacle marked as value > 0, typically 1
+    :return: True if line is not blocked
+    '''
 
     m, n = grid.shape
     # make x1 <=x2, switch p1,p2 when necessary
     x1, y1, x2, y2 = (p1[0], p1[1], p2[0], p2[1]) if p1[0] < p2[0] else (p2[0], p2[1], p1[0], p1[1])
     min_y, max_y = (y1, y2) if y1 < y2 else (y2, y1)
 
+    # check boundary and convert to integer if not done
     if y2 > y1:
         x1, y1 = int(np.floor(x1)), int(np.floor(y1))
         x2, y2 = int(np.ceil(x2)), int(np.ceil(y2))
@@ -193,6 +213,7 @@ def ray_tracing_bresham(p1, p2, grid):
         x1, y1 = int(np.floor(x1)), int(np.ceil(y1))
         x2, y2 = int(np.ceil(x2)), int(np.floor(y2))
 
+    # out of the grid
     if x1 < 0 or x2 > m - 1 or min_y < 0 or max_y > n - 1:
         return False
 
@@ -223,6 +244,7 @@ def ray_tracing_bresham(p1, p2, grid):
                 fx_dx += dy
     elif dy < 0:
         while x <= x2 and y >= y2:
+            # due to integer, the cell is x, y-1 for slope < 0
             if grid[x][y - 1] > 0:
                 collision = True
                 break
@@ -247,10 +269,12 @@ def ray_tracing_bresham(p1, p2, grid):
 
 
 def bresham(p1, p2):
-    """
-    return a list of cells with integer index
-    """
-
+    '''
+    using ray tracing, bresenham algorithm to get the cells/pixels along p1-> p2
+    :param p1: start 2d point
+    :param p2: end 2d point
+    :return: a list of cells
+    '''
     # make x1 <=x2, switch p1,p2 when necessary
     reverse = p1[0] > p2[0]
     x1, y1, x2, y2 = (p1[0], p1[1], p2[0], p2[1]) if not reverse else (p2[0], p2[1], p1[0], p1[1])
@@ -301,22 +325,40 @@ def bresham(p1, p2):
             x += 1
     if reverse:
         cells = cells[::-1]
+
     return cells
 
 
 def collinearity_check(p1, p2, p3, epsilon=1e-6):
+    '''
+    check if 3 points are collinear
+    :param p1: point1
+    :param p2: point2
+    :param p3: point3
+    :param epsilon: criteria  to check linearity
+    :return: True if linear
+    '''
+
+    p1 = np.array(p1).reshape(1, -1)
+    p2 = np.array(p2).reshape(1, -1)
+    p3 = np.array(p3).reshape(1, -1)
     m = np.concatenate((p1, p2, p3), 0)
     det = np.linalg.det(m)
     return abs(det) < epsilon
 
 def prune_path_collinear(path):
+    '''
+    removing redudant waypoints along path by checking linearity
+    :param path: waypoints to check
+    :return: a new waypoints without redudant waypoints
+    '''
     # pruned_path = [p for p in path]
     pruned_path = []
     pruned_path.append(path[0])
     for i in range(1, len(path) - 1):
-        p0 = np.array(pruned_path[-1]).reshape(1,-1)
-        p1 = np.array(path[i]).reshape(1,-1)
-        p2 = np.array(path[i + 1]).reshape(1,-1)
+        p0 = pruned_path[-1]
+        p1 = path[i]
+        p2 = path[i + 1]
         if not collinearity_check(p0, p1, p2):
             pruned_path.append(path[i])
 
@@ -326,6 +368,12 @@ def prune_path_collinear(path):
 
 
 def prune_path_ray_tracing(path, grid):
+    '''
+    using ray tracing to remove redudant waypoints
+    :param path: waypoints to check
+    :param grid: grid with obstacle marked as value > 0, typically 1
+    :return: a new waypoints without redudant waypoints
+    '''
     pruned_path = []
     pruned_path.append(path[0])
     # remove intermediate points
@@ -341,11 +389,14 @@ def prune_path_ray_tracing(path, grid):
 
 
 def create_grid(data, safety_distance):
-    """
+    '''
     Returns a grid representation of a 2D configuration space
     based on given obstacle data, drone altitude and safety distance
     arguments.
-    """
+    :param data: obstacle data with drone NED coordinate
+    :param safety_distance: buffer distance additionally to obstacle
+    :return: (grid_safe,grid, offset_north,offset_east)
+    '''
 
     # minimum and maximum north coordinates
     north_min = np.floor(np.min(data[:, 0] - data[:, 3]))
@@ -382,15 +433,21 @@ def create_grid(data, safety_distance):
         grid_w_safty[obstacle[0]:obstacle[1] + 1, obstacle[2]:obstacle[3] + 1] = alt + d_alt
         grid[obstacle_raw[0]:obstacle_raw[1] + 1, obstacle_raw[2]:obstacle_raw[3] + 1] = alt + d_alt
 
+    # grid_w_safty considering the buffer distance(safty_distance)
+    # grid does not consider buffer, it is used to get the latitude when drone landing on a obstacle
+    # if use grid_w_safty, drone may landing on buffer space which is considered as obstacle, but in reality it is free.
     return grid_w_safty, grid, int(north_min), int(east_min)
 
 
 def create_graph(block_centers, grid):
-    """
-    Returns a grid representation of a 2D configuration space
+    '''
+     Returns a grid representation of a 2D configuration space
     along with a graph  given obstacle data and the
     drone's altitude.
-    """
+    :param block_centers: obstacle center points , used for Voronoi graph construction
+    :param grid:  used for ray tracing
+    :return:
+    '''
     # create a voronoi graph based on
     # location of obstacle centres
     vi = Voronoi(block_centers)
@@ -403,9 +460,11 @@ def create_graph(block_centers, grid):
             graph.add_edge((int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), weight=dist)
 
     # find the biggest subgraph which is connected.
+    # since not all the components are connected, choosing the largest component with most nodes
     components = list(nx.connected_component_subgraphs(graph))
     number_of_nodes = [com.number_of_nodes() for com in components]
     subgraph = components[np.argmax(number_of_nodes)]
+
     return subgraph
 
 
@@ -417,28 +476,30 @@ def closest_point(graph, current_point):
     all_nodes = np.array(graph.nodes)
     dists = LA.norm(all_nodes - np.array(current_point),axis=1)
     min_ind = np.argmin(dists)
-    # need tuple for indexing
-    return (all_nodes[min_ind][0],all_nodes[min_ind][1])
+    # tuple for hashing
+    return all_nodes[min_ind][0],all_nodes[min_ind][1]
 
 
 def plan_path(start_3d, goal_3d, grid, block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE):
     '''
-    the function does the waypoint/path planning
-    :param data:
-    :param start:
-    :param goal:
-    :param TARGET_ALTITUDE:
-    :param SAFETY_DISTANCE:
-    :return:
+    the main function for planning a path generation
+    :param start_3d: start point with 3d coordinate, only 2d is used
+    :param goal_3d: goal point with 3d coordinate
+    :param grid: grid with obstacle area marked >0
+    :param block_centers: obstacle centers used for create voronoi graph
+    :param TARGET_ALTITUDE: drone target altitude
+    :param SAFETY_DISTANCE:  buffer distance for safty
+    :return: waypoints to fly
     '''
 
     # grid cut at flying altitude
     grid_at_alt = np.array(grid > TARGET_ALTITUDE - SAFETY_DISTANCE, dtype=np.int)
 
-    waypoints = []
+    # most operations are at 2d level, so convert to 2d points
     start = (start_3d[0],start_3d[1])
     goal = (goal_3d[0],goal_3d[1])
 
+    waypoints = []
     # case 1, check if there is a straight line between  start and goal:
     if ray_tracing_bresham(start, goal, grid_at_alt):
         waypoints = [[start[0], start[1], TARGET_ALTITUDE], [goal[0], goal[1], TARGET_ALTITUDE]]
@@ -447,20 +508,25 @@ def plan_path(start_3d, goal_3d, grid, block_centers, TARGET_ALTITUDE, SAFETY_DI
     # case 2, create graph for path generattion
     graph = create_graph(block_centers, grid_at_alt)
 
+    # find closest points to start and goal in graph
     start_np = closest_point(graph, start)
     goal_np = closest_point(graph, goal)
 
     # get straight line and fly by elevate the vehicle to height which no thing will block
+    # this is naive approach.
     path1 = bresham(start, start_np)
     index = np.transpose(np.array(path1))
     max_altitude = int(np.max(grid[index[0], index[1]]) + SAFETY_DISTANCE)
     if max_altitude < TARGET_ALTITUDE:
         max_altitude = TARGET_ALTITUDE
 
+    # add a rectangle path, naive approach
     waypoints.append([start[0], start[1], max_altitude])
     waypoints.append([start_np[0], start_np[1], max_altitude])
     waypoints.append([start_np[0], start_np[1], TARGET_ALTITUDE])
 
+    # 2nd path using graph search, equivalent methods.
+    # equivalent function 'nx.shortest_path()' or ' nx.dijkstra_path()'
     path2, _ = a_star_graph(graph, heuristic, start_np, goal_np)
     #do ray_tracing prunch
     path2 = prune_path_ray_tracing(path2,grid_at_alt)
@@ -485,7 +551,7 @@ def plan_path(start_3d, goal_3d, grid, block_centers, TARGET_ALTITUDE, SAFETY_DI
 
 def calc_heading(waypoints):
     '''
-
+    add drone heading
     :param waypoints:
     :return: waypoints with heading adjusted
     '''
