@@ -7,7 +7,7 @@ import numpy as np
 import re as re
 from time import gmtime, strftime
 
-from planning_utils import create_grid, plan_path, calc_heading
+from planning_utils import create_grid, plan_waypoints, calc_heading
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -126,7 +126,7 @@ class MotionPlanning(Drone):
         self.flight_state = States.PLANNING
         print("Searching for a path ...")
         TARGET_ALTITUDE = 10
-        SAFETY_DISTANCE = 10
+        SAFETY_DISTANCE = 5
 
         self.target_position[2] = TARGET_ALTITUDE
 
@@ -192,10 +192,10 @@ class MotionPlanning(Drone):
         print('Start and Goal position on grid: ', grid_start, grid_goal)
 
         # block center at flying altitude
-        grid_block_centers = data[np.where(data[:, 2] * 2 + SAFETY_DISTANCE > TARGET_ALTITUDE)][:, :2]  - [north_offset,east_offset]
+        grid_obstacle_centers = data[np.where(data[:, 2] * 2 + SAFETY_DISTANCE > TARGET_ALTITUDE)][:, :2]  - [north_offset,east_offset]
 
         # waypoint in grid coordinate
-        grid_waypoints = plan_path(start_3d, goal_3d, grid_w_safty, grid_block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE)
+        grid_waypoints = plan_waypoints(start_3d, goal_3d, grid_w_safty, grid_obstacle_centers, TARGET_ALTITUDE, SAFETY_DISTANCE)
 
         # Convert grid_waypoints to NED local coordination
         waypoints = np.array(grid_waypoints) + np.array([north_offset,east_offset,0])

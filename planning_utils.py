@@ -480,7 +480,7 @@ def closest_point(graph, current_point):
     return all_nodes[min_ind][0],all_nodes[min_ind][1]
 
 
-def plan_path(start_3d, goal_3d, grid, block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE):
+def plan_waypoints(start_3d, goal_3d, grid, block_centers, TARGET_ALTITUDE, SAFETY_DISTANCE):
     '''
     the main function for planning a path generation
     :param start_3d: start point with 3d coordinate, only 2d is used
@@ -502,7 +502,7 @@ def plan_path(start_3d, goal_3d, grid, block_centers, TARGET_ALTITUDE, SAFETY_DI
     waypoints = []
     # case 1, check if there is a straight line between  start and goal:
     if ray_tracing_bresham(start, goal, grid_at_alt):
-        waypoints = [[start[0], start[1], TARGET_ALTITUDE], [goal[0], goal[1], TARGET_ALTITUDE]]
+        waypoints = [[start[0], start[1], TARGET_ALTITUDE], [goal[0], goal[1], TARGET_ALTITUDE],[goal[0], goal[1], goal_3d[2]]]
         return waypoints
 
     # case 2, create graph for path generattion
